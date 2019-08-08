@@ -49,6 +49,12 @@ struct coord_t {
     int id;
 };
 
+// label quadrangle with 4 vertices
+struct quadrangle_t {
+	cv::Point2i abs_vertices[4];
+	int id;
+};
+
 class Tracker_optflow {
 public:
     const int flow_error;
@@ -169,6 +175,13 @@ public:
 
 };
 
+constexpr int PREVIEW_WIDTH = 100;
+constexpr int PREVIEW_HEIGHT = 100;
+constexpr int FULL_IMAGE_WIDHT = 1280;
+constexpr int FULL_IMAGE_HEIGHT = 720;
+constexpr int ARROW_BOX_WIDTH = 50;
+constexpr int ARROW_BOX_HEIGHT = 100;
+
 std::atomic<bool> right_button_click;
 std::atomic<int> move_rect_id;
 std::atomic<bool> move_rect;
@@ -193,6 +206,12 @@ std::atomic<int> add_id_img;
 Rect prev_img_rect(0, 0, 50, 100);
 Rect next_img_rect(1280 - 50, 0, 50, 100);
 
+std::atomic<bool> show_quad(false);
+std::atomic<int> vertex_x[4], vertex_y[4];
+std::atomic<int> vertex_count(0);
+std::atomic<bool> export_selected(false);
+
+cv::String current_img_filename;
 
 void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
 {
@@ -202,24 +221,46 @@ void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
     }
     else if (event == cv::EVENT_LBUTTONDOWN)
     {
-        draw_select = true;
-        selected = false;
-        x_start = x;
-        y_start = y;
+		// Original
+        //draw_select = true;
+        //selected = false;
+        //x_start = x;
+        //y_start = y;
 
-        if (prev_img_rect.contains(Point2i(x, y))) add_id_img = -1;
-        else if (next_img_rect.contains(Point2i(x, y))) add_id_img = 1;
-        else add_id_img = 0;
+		// Quadrangle Ver
+		if (x >= 0 && y >= PREVIEW_HEIGHT && x < FULL_IMAGE_WIDHT && y < FULL_IMAGE_HEIGHT + PREVIEW_HEIGHT) {
+			vertex_x[vertex_count] = x;
+			vertex_y[vertex_count] = y;
+			if (++vertex_count == 4) {
+				vertex_count = 0;
+				draw_select = false;
+				selected = true;
+			}
+			else {
+				draw_select = true;
+				selected = false;
+			}
+		}
+		if (prev_img_rect.contains(Point2i(x, y))) add_id_img = -1;
+		else if (next_img_rect.contains(Point2i(x, y))) add_id_img = 1;
+		else add_id_img = 0;
+
+		if (y < PREVIEW_HEIGHT && x > PREVIEW_WIDTH && x < (FULL_IMAGE_WIDHT - ARROW_BOX_WIDTH) &&
+			y < PREVIEW_HEIGHT) // preview 이미지중 하나 선택
+		{
+			int const i = (x - ARROW_BOX_WIDTH) / PREVIEW_WIDTH;
+			add_id_img += i;
+		}
         //std::cout << "cv::EVENT_LBUTTONDOWN \n";
     }
     else if (event == cv::EVENT_LBUTTONUP)
     {
-        x_size = abs(x - x_start);
+       /* x_size = abs(x - x_start);
         y_size = abs(y - y_start);
         x_end = max(x, 0);
         y_end = max(y, 0);
         draw_select = false;
-        selected = true;
+        selected = true;*/
         //std::cout << "cv::EVENT_LBUTTONUP \n";
     }
     else if (event == cv::EVENT_RBUTTONDOWN)
@@ -244,6 +285,38 @@ void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
         x_end = max(x, 0);
         y_end = max(y, 0);
     }
+}
+
+Rect* get_bbox(int x[], int y[], int n) {
+	std::pair<int*, int*> x_coord, y_coord;
+	x_coord = std::minmax_element(x, x + n);
+	y_coord = std::minmax_element(y, y + n);
+	Rect* rect = new Rect(*x_coord.first, *y_coord.first, *x_coord.second - *x_coord.first, *y_coord.second - *y_coord.first);
+	return rect;
+}
+
+Rect* get_bbox(Point points[], int n) {
+	int min_x, min_y, max_x, max_y;
+	min_x = max_x = points[0].x;
+	min_y = max_y = points[0].y;
+	for(int i = 0; i < n; i++){
+		if (points[i].x < min_x)
+			min_x = points[i].x;
+		if (points[i].x > max_x)
+			max_x = points[i].x;
+		if (points[i].y < min_y)
+			min_y = points[i].y;
+		if (points[i].y > max_y)
+			max_y = points[i].y;
+	}
+	Rect* rect = new Rect(min_x, min_y, max_x - min_x, max_y - min_y);
+	return rect;
+}
+
+void draw_quadrangle(Mat mat, Point points[], Scalar color, int thickness = 1) {
+	for(int i = 0; i < 3; i++)
+		line(mat, points[i], points[i+1], color, thickness);
+	line(mat, points[0], points[3], color, thickness);
 }
 
 class comma : public std::numpunct<char> {
@@ -436,7 +509,7 @@ int main(int argc, char *argv[])
 			txt_filenames.push_back(i + ".txt");
 		}
 
-		int image_list_count = max(1, (int)jpg_filenames_path.size() - 1);
+		int image_list_count = max(1, (int)jpg_filenames_path.size() - 1); 
 
 		// store train.txt
 		std::ofstream ofs_train(train_filename, std::ios::out | std::ios::trunc);
@@ -447,6 +520,7 @@ int main(int argc, char *argv[])
 		for (size_t i = 0; i < intersect_filenames.size(); ++i) {
 			ofs_train << images_path << "/" << intersect_filenames[i] << "." << intersect_ext[i] << std::endl;
 		}
+
 		ofs_train.flush();
 		std::cout << "File opened for output: " << train_filename << std::endl;
 
@@ -475,6 +549,7 @@ int main(int argc, char *argv[])
 
         // labels on the current image
 		std::vector<coord_t> current_coord_vec;
+		std::vector<quadrangle_t> current_quadrangle_vec;
 		Size current_img_size;
 
 
@@ -497,7 +572,6 @@ int main(int argc, char *argv[])
 		int const max_object_id = (synset_txt.size() > 0) ? synset_txt.size() : 20;
 		int tb_res_2 = createTrackbar(trackbar_name_2, window_name, &current_obj_id, max_object_id);
 
-
 		do {
 			//trackbar_value = min(max(0, trackbar_value), (int)jpg_filenames_path.size() - 1);
 
@@ -509,6 +583,10 @@ int main(int argc, char *argv[])
 				frame(Rect(0, 0, frame.cols, preview.rows)) = Scalar::all(0);
                 move_rect_id = -1;
 
+				vertex_count = 0;
+				draw_select = false;
+				selected = false;
+
 				// save current coords
 				if (old_trackbar_value >= 0) // && current_coord_vec.size() > 0) // Yolo v2 can processes background-image without objects
 				{
@@ -518,11 +596,15 @@ int main(int argc, char *argv[])
 						std::string const filename_without_ext = jpg_filename.substr(0, jpg_filename.find_last_of("."));
 						std::string const txt_filename = filename_without_ext + ".txt";
 						std::string const txt_filename_path = images_path + "/" + txt_filename;
+						std::string const txt_filename_quadrangle = filename_without_ext + "_quadrangle.txt";
+						std::string const txt_filename_quadrangle_path = images_path + "/" + txt_filename_quadrangle;
 
 						std::cout << "txt_filename_path = " << txt_filename_path << std::endl;
 
 						std::ofstream ofs(txt_filename_path, std::ios::out | std::ios::trunc);
+						std::ofstream ofs_quadrangle(txt_filename_quadrangle_path, std::ios::out | std::ios::trunc);
 						ofs << std::fixed;
+						ofs_quadrangle << std::fixed;
 
 						// store coords to [image name].txt
 						for (auto &i : current_coord_vec)
@@ -541,7 +623,25 @@ int main(int argc, char *argv[])
 								relative_center_x << " " << relative_center_y << " " <<
 								relative_width << " " << relative_height << std::endl;
 						}
-						
+
+						// store coords to [image name]_quadrange.txt
+						for (auto& quadrangle : current_quadrangle_vec) {
+							float const relative_first_x = (float)quadrangle.abs_vertices[0].x / full_image_roi.cols;
+							float const relative_first_y = (float)quadrangle.abs_vertices[0].y / full_image_roi.rows;
+							float const relative_second_x = (float)quadrangle.abs_vertices[1].x / full_image_roi.cols;
+							float const relative_second_y = (float)quadrangle.abs_vertices[1].y / full_image_roi.rows;
+							float const relative_third_x = (float)quadrangle.abs_vertices[2].x / full_image_roi.cols;
+							float const relative_third_y = (float)quadrangle.abs_vertices[2].y / full_image_roi.rows;
+							float const relative_forth_x = (float)quadrangle.abs_vertices[3].x / full_image_roi.cols;
+							float const relative_forth_y = (float)quadrangle.abs_vertices[3].y / full_image_roi.rows;
+
+							ofs_quadrangle << quadrangle.id << " " <<
+								relative_first_x << " " << relative_first_y << " " <<
+								relative_second_x << " " << relative_second_y << " " <<
+								relative_third_x << " " << relative_third_y << " " <<
+								relative_forth_x << " " << relative_forth_y << " " << std::endl;
+						}
+
 						// store [path/image name.jpg] to train.txt
 						auto it = std::find(difference_filenames.begin(), difference_filenames.end(), filename_without_ext);
 						if (it != difference_filenames.end())
@@ -574,7 +674,7 @@ int main(int argc, char *argv[])
 					//rectangle(frame, rect_dst, Scalar(200, 150, 200), 2);
 					putText(dst_roi, jpg_filenames[trackbar_value + i], Point2i(0, 10), FONT_HERSHEY_COMPLEX_SMALL, 0.5, Scalar::all(255));
 
-					if (i == 0)
+					if (i == 0) // show full image
 					{
                         optflow_img = img;
 						resize(img, full_image, full_rect_dst.size());
@@ -584,7 +684,12 @@ int main(int argc, char *argv[])
 						try {
 							std::string const jpg_filename = jpg_filenames[trackbar_value];
 							std::string const txt_filename = jpg_filename.substr(0, jpg_filename.find_last_of(".")) + ".txt";
+							std::string const txt_filename_quad = jpg_filename.substr(0, jpg_filename.find_last_of(".")) + "_quadrangle.txt";
 							//std::cout << (images_path + "/" + txt_filename) << std::endl;
+
+							current_img_filename = jpg_filename;
+
+							// refresh current_coord_vec from txt file
 							std::ifstream ifs(images_path + "/" + txt_filename);
                             if (copy_previous_marks) copy_previous_marks = false;
                             else if (tracker_copy_previous_marks) {
@@ -610,6 +715,30 @@ int main(int argc, char *argv[])
 
 								current_coord_vec.push_back(coord);
 							}
+
+							// refresh current_quadrangle_vec from txt file
+							std::ifstream ifs_quad(images_path + "/" + txt_filename_quad);
+							current_quadrangle_vec.clear();
+							for (std::string line; getline(ifs_quad, line);) {
+								std::stringstream ss(line);
+								quadrangle_t quad;
+								quad.id = -1;
+								ss >> quad.id;
+								if (quad.id < 0) continue;
+								float relative_coord[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+								for (size_t i = 0; i < 8; i++)
+									ss >> relative_coord[i];
+								quad.abs_vertices[0].x = relative_coord[0] * FULL_IMAGE_WIDHT;
+								quad.abs_vertices[0].y = relative_coord[1] * FULL_IMAGE_HEIGHT;
+								quad.abs_vertices[1].x = relative_coord[2] * FULL_IMAGE_WIDHT;
+								quad.abs_vertices[1].y = relative_coord[3] * FULL_IMAGE_HEIGHT;
+								quad.abs_vertices[2].x = relative_coord[4] * FULL_IMAGE_WIDHT;
+								quad.abs_vertices[2].y = relative_coord[5] * FULL_IMAGE_HEIGHT;
+								quad.abs_vertices[3].x = relative_coord[6] * FULL_IMAGE_WIDHT;
+								quad.abs_vertices[3].y = relative_coord[7] * FULL_IMAGE_HEIGHT;
+
+								current_quadrangle_vec.push_back(quad);
+							}
 						}
 						catch (...) { std::cout << " Exception when try to read txt-file \n"; }
 					}
@@ -633,8 +762,8 @@ int main(int argc, char *argv[])
 
 				marks_changed = false;
 
-				rectangle(frame, prev_img_rect, Scalar(100, 100, 100), CV_FILLED);
-				rectangle(frame, next_img_rect, Scalar(100, 100, 100), CV_FILLED);
+				cv::rectangle(frame, prev_img_rect, Scalar(100, 100, 100), CV_FILLED);
+				cv::rectangle(frame, next_img_rect, Scalar(100, 100, 100), CV_FILLED);
 			}
 
 			trackbar_value = min(max(0, trackbar_value), (int)jpg_filenames_path.size() - 1);
@@ -646,26 +775,27 @@ int main(int argc, char *argv[])
 				Rect rect_dst(Point2i(x_shift, 0), Size(preview.cols - 2, preview.rows));
 				Scalar color(100, 70, 100);
 				if (i == 0) color = Scalar(250, 120, 150);
-				if (y_end < preview.rows && i == (x_end - prev_img_rect.width) / preview.cols) color = Scalar(250, 200, 200);
-				rectangle(frame, rect_dst, color, 2);
+				if (y_end < preview.rows && (x_end - prev_img_rect.width) > 0 && i == (x_end - prev_img_rect.width) / preview.cols) color = Scalar(250, 200, 200);
+				cv::rectangle(frame, rect_dst, color, 2);
 			}
 
-			if (undo) {
+			/*if (undo) {
 				undo = false;
 				if(current_coord_vec.size() > 0) {
 					full_image.copyTo(full_image_roi);
 					current_coord_vec.pop_back();
 				}
-			}
+			}*/
 
             // marking is completed (left mouse button is OFF)
+			/*
 			if (selected)
 			{
 				selected = false;
 				full_image.copyTo(full_image_roi);
 
 				if (y_end < preview.rows && x_end > prev_img_rect.width && x_end < (full_image.cols - prev_img_rect.width) &&
-					y_start < preview.rows)
+					y_start < preview.rows) // preview 이미지중 하나 선택
 				{
 					int const i = (x_end - prev_img_rect.width) / preview.cols;
 					trackbar_value += i;
@@ -688,6 +818,37 @@ int main(int argc, char *argv[])
 					coord.abs_rect = selected_rect;
 					coord.id = current_obj_id;
 					current_coord_vec.push_back(coord);
+
+					marks_changed = true;
+				}
+			}
+			*/
+
+			// marking is completed (4 vertices are chosen)
+			if (selected) {
+				selected = false;
+				full_image.copyTo(full_image_roi);
+				
+				if (y_end >= preview.rows)
+				{
+					Rect* selected_rect = get_bbox((int*)vertex_x, (int*)vertex_y, 4);
+
+					*selected_rect &= full_rect_dst;
+					selected_rect->y -= (int)prev_img_rect.height;
+
+					coord_t coord;
+					coord.abs_rect = *selected_rect;
+					coord.id = current_obj_id;
+					current_coord_vec.push_back(coord);
+					delete selected_rect;
+
+					quadrangle_t quad;
+					quad.id = current_obj_id;
+					quad.abs_vertices[0] = Point2i(vertex_x[0], vertex_y[0] - (int)prev_img_rect.height);
+					quad.abs_vertices[1] = Point2i(vertex_x[1], vertex_y[1] - (int)prev_img_rect.height);
+					quad.abs_vertices[2] = Point2i(vertex_x[2], vertex_y[2] - (int)prev_img_rect.height);
+					quad.abs_vertices[3] = Point2i(vertex_x[3], vertex_y[3] - (int)prev_img_rect.height);
+					current_quadrangle_vec.push_back(quad);
 
 					marks_changed = true;
 				}
@@ -720,7 +881,7 @@ int main(int argc, char *argv[])
 			}
 
             // marking is in progress (left mouse button is ON)
-			if (draw_select)
+			/*if (draw_select)
 			{
 				if (add_id_img != 0) trackbar_value += add_id_img;
 
@@ -738,6 +899,29 @@ int main(int argc, char *argv[])
 							selected_rect.tl() + Point2i(2, 22), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(150, 200, 150), 2);
 					}
 				}
+			}
+			*/
+
+			// marking is in progress (1~3 vertices are chosen)
+			if (draw_select)
+			{
+				full_image.copyTo(full_image_roi);
+				if (vertex_count == 1) {
+					circle(frame, Point2i(vertex_x[0], vertex_y[0]), 7, Scalar(150, 200, 150), FILLED);
+				}
+				else {
+					for (int i = 0; i < vertex_count - 1; i++)
+						line(frame, Point2i(vertex_x[i], vertex_y[i]), Point2i(vertex_x[i + 1], vertex_y[i + 1]), Scalar(150, 200, 150), mark_line_width);
+				}
+				if (show_mark_class)
+				{
+					putText(frame, std::to_string(current_obj_id) + current_synset_name,
+						Point2i(vertex_x[0], vertex_y[0]) + Point2i(2, 22), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(150, 200, 150), 2);
+				}
+			}
+			if (add_id_img != 0) {
+				trackbar_value += add_id_img;
+				add_id_img = 0;
 			}
 
 			// Draw crosshair
@@ -780,6 +964,7 @@ int main(int argc, char *argv[])
 				marks_changed = true;
 				full_image.copyTo(full_image_roi);
 				current_coord_vec.clear();
+				current_quadrangle_vec.clear();
 			}
 
 
@@ -792,44 +977,112 @@ int main(int argc, char *argv[])
 
             int selected_id = -1;
             // draw all labels
-			//for (auto &i : current_coord_vec)
-            for(size_t k = 0; k < current_coord_vec.size(); ++k)
-			{
-                auto &i = current_coord_vec.at(k);
-				std::string synset_name;
-				if (i.id < synset_txt.size()) synset_name = " - " + synset_txt[i.id];
+			if (show_quad) {
+				for (size_t k = 0; k < current_quadrangle_vec.size(); k++) {
+					auto& i = current_quadrangle_vec.at(k);
+					std::string synset_name;
+					if (i.id < synset_txt.size()) synset_name = " - " + synset_txt[i.id];
 
-				int offset = i.id * 25;
-				int red = (offset + 0) % 255 * ((i.id + 2) % 3);
-				int green = (offset + 70) % 255 * ((i.id + 1) % 3);
-				int blue = (offset + 140) % 255 * ((i.id + 0) % 3);
-				Scalar color_rect(red, green, blue);    // Scalar color_rect(100, 200, 100);
+					int offset = i.id * 25;
+					int red = (offset + 0) % 255 * ((i.id + 2) % 3);
+					int green = (offset + 70) % 255 * ((i.id + 1) % 3);
+					int blue = (offset + 140) % 255 * ((i.id + 0) % 3);
+					Scalar color_rect(red, green, blue);    // Scalar color_rect(100, 200, 100);
 
-                // selected rect
-                if (i.abs_rect.x < x_end && (i.abs_rect.x + i.abs_rect.width) > x_end &&
-                    (i.abs_rect.y + preview.rows) < y_end && (i.abs_rect.y + i.abs_rect.height + preview.rows) > y_end)
-                {
-                    if (selected_id < 0) {
-                        color_rect = Scalar(100, 200, 300);
-                        selected_id = k;
-                        rectangle(full_image_roi, i.abs_rect, color_rect, mark_line_width*2);
-                    }
-                }
+					Rect* bbox = get_bbox(i.abs_vertices, 4);
+					// selected rect
+					if (bbox->x < x_end && (bbox->x + bbox->width) > x_end &&
+						(bbox->y + preview.rows) < y_end && (bbox->y + bbox->height + preview.rows) > y_end)
+					{
+						if (selected_id < 0) {
+							color_rect = Scalar(100, 200, 300);
+							selected_id = k;
+							draw_quadrangle(full_image_roi, i.abs_vertices, color_rect, mark_line_width * 2);
+						}
+					}
 
-				if (show_mark_class)
-				{
-					putText(full_image_roi, std::to_string(i.id) + synset_name,
-						i.abs_rect.tl() + Point2f(2, 22), FONT_HERSHEY_SIMPLEX, 0.8, color_rect, 2);
+					if (show_mark_class)
+					{
+						putText(full_image_roi, std::to_string(i.id) + synset_name,
+							bbox->tl() + Point2i(2, 22), FONT_HERSHEY_SIMPLEX, 0.8, color_rect, 2);
+					}
+					delete bbox;
+
+					draw_quadrangle(full_image_roi, i.abs_vertices, color_rect, mark_line_width);
 				}
-
-				rectangle(full_image_roi, i.abs_rect, color_rect, mark_line_width);
 			}
-            
+			else {
+				for (size_t k = 0; k < current_coord_vec.size(); ++k)
+				{
+					auto& i = current_coord_vec.at(k);
+					std::string synset_name;
+					if (i.id < synset_txt.size()) synset_name = " - " + synset_txt[i.id];
+
+					int offset = i.id * 25;
+					int red = (offset + 0) % 255 * ((i.id + 2) % 3);
+					int green = (offset + 70) % 255 * ((i.id + 1) % 3);
+					int blue = (offset + 140) % 255 * ((i.id + 0) % 3);
+					Scalar color_rect(red, green, blue);    // Scalar color_rect(100, 200, 100);
+
+					// selected rect
+					if (i.abs_rect.x < x_end && (i.abs_rect.x + i.abs_rect.width) > x_end &&
+						(i.abs_rect.y + preview.rows) < y_end && (i.abs_rect.y + i.abs_rect.height + preview.rows) > y_end)
+					{
+						if (selected_id < 0) {
+							color_rect = Scalar(100, 200, 300);
+							selected_id = k;
+							cv::rectangle(full_image_roi, i.abs_rect, color_rect, mark_line_width * 2);
+						}
+					}
+
+					if (show_mark_class)
+					{
+						putText(full_image_roi, std::to_string(i.id) + synset_name,
+							i.abs_rect.tl() + Point2f(2, 22), FONT_HERSHEY_SIMPLEX, 0.8, color_rect, 2);
+					}
+
+					cv::rectangle(full_image_roi, i.abs_rect, color_rect, mark_line_width);
+				}
+			}
+
+			// show filename of the current image
+			putText(full_image_roi, current_img_filename, Point2i(640, 700), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(25, 25, 255), 2);
+
             // remove selected rect
             if (delete_selected) {
                 delete_selected = false;
-                if (selected_id >= 0) current_coord_vec.erase(current_coord_vec.begin() + selected_id);
+				if (selected_id >= 0) {
+					current_coord_vec.erase(current_coord_vec.begin() + selected_id);
+					current_quadrangle_vec.erase(current_quadrangle_vec.begin() + selected_id);
+				}
             }
+
+			if (export_selected) {
+				export_selected = false;
+				if (selected_id >= 0) {
+					quadrangle_t quad = current_quadrangle_vec[selected_id];
+					std::string clsName = synset_txt[quad.id];
+					Rect2i rect = current_coord_vec[selected_id].abs_rect;
+					Mat cropped = full_image(rect);
+					Mat warped(rect.size(), CV_8UC3);
+					
+					std::vector<Point2i> points1, points2;
+					points1 = std::vector<Point2i>(quad.abs_vertices, quad.abs_vertices + 4);
+					for (auto ppoint = points1.begin(); ppoint != points1.end(); ppoint++) {
+						ppoint->x -= rect.x;
+						ppoint->y -= rect.y;
+					}
+					points2.push_back(Point2i(0, 0));
+					points2.push_back(Point2i(0, rect.height));
+					points2.push_back(Point2i(rect.width, rect.height));
+					points2.push_back(Point2i(rect.width, 0));
+					
+					Mat H = findHomography(points1, points2, RANSAC);
+					warpPerspective(cropped, warped, H, warped.size());
+					
+					imwrite("ref_" + clsName + ".jpg", warped);
+				}
+			}
 
             // show moving rect
             if (right_button_click == true)
@@ -843,7 +1096,7 @@ int main(int argc, char *argv[])
                 rect.y += y_delta;
 
                 Scalar color_rect = Scalar(300, 200, 100);
-                rectangle(full_image_roi, rect, color_rect, mark_line_width);
+                cv::rectangle(full_image_roi, rect, color_rect, mark_line_width);
             }
 
             // complete moving label rect
@@ -862,6 +1115,10 @@ int main(int argc, char *argv[])
                     Point2i(850, 20), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 170, 100), 2);
             }
 
+			if (show_quad) {
+				putText(full_image_roi, "Mode: showing quadrangle", 
+					Point2i(20, 700), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 170, 100), 2);
+			}
 
 			{
 				std::string const obj_str = "Object id: " + std::to_string(current_obj_id) + current_synset_name;
@@ -879,6 +1136,7 @@ int main(int argc, char *argv[])
 				putText(full_image_roi,
 					"w - line width   k - hide obj_name   p - copy previous   o - track objects   r - delete selected   R-mouse - move box", //   h - disable help",
 					Point2i(0, 80), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
+				putText(full_image_roi, "z - show quadrangle", Point2i(0, 115), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
 			}
 			else
 			{
@@ -929,22 +1187,24 @@ int main(int argc, char *argv[])
 
 			switch (pressed_key)
 			{
-			//case 'z':		// z
-			//case 1048698:	// z
-			//    undo = true;
-			//	break;
+			case 'z':		// z
+			case 1048698:	// z
+			    //undo = true;
+				show_quad = !show_quad;
+				full_image.copyTo(full_image_roi);
+				break;
 
-            case 'p':       // p
-            case 1048688:	// p
-                copy_previous_marks = 1;
-                ++trackbar_value;
-                break;
+            //case 'p':       // p
+            //case 1048688:	// p
+            //    copy_previous_marks = 1;
+            //    ++trackbar_value;
+            //    break;
 
-            case 'o':       // o
-            case 1048687:	// o
-                tracker_copy_previous_marks = 1;
-                ++trackbar_value;
-                break;
+            //case 'o':       // o
+            //case 1048687:	// o
+            //    tracker_copy_previous_marks = 1;
+            //    ++trackbar_value;
+            //    break;
 
 			case 32:        // SPACE
 			case 1048608:	// SPACE
@@ -970,11 +1230,11 @@ int main(int argc, char *argv[])
 				show_mouse_coords = !show_mouse_coords;
 				full_image.copyTo(full_image_roi);
 				break;
-			case 'n':       // n
-			case 1048686:   // n
-				next_by_click = !next_by_click;
-				full_image.copyTo(full_image_roi);
-				break;
+			//case 'n':       // n
+			//case 1048686:   // n
+			//	next_by_click = !next_by_click;
+			//	full_image.copyTo(full_image_roi);
+			//	break;
 			case 'w':       // w
 			case 1048695:   // w
 				mark_line_width = mark_line_width % MAX_MARK_LINE_WIDTH + 1;
@@ -991,6 +1251,9 @@ int main(int argc, char *argv[])
             case 1048690:   // r
                 delete_selected = true;
                 break;
+			case 's':
+				export_selected = true;
+				break;
 			default:
 				;
 			}
