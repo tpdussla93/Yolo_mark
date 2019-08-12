@@ -37,3 +37,4 @@ for imgName in imgList:
         cv2.imwrite(fileNameWithoutExt + ".jpg", tmp)
         copyfile(labelTxtName, fileNameWithoutExt + ".txt")
         copyfile(labelQuadTxtName,fileNameWithoutExt + "_quadrangle.txt")
+    print(imgName + "has been augmented!")
