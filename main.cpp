@@ -209,9 +209,12 @@ Rect next_img_rect(1280 - 50, 0, 50, 100);
 std::atomic<bool> show_quad(false);
 std::atomic<int> vertex_x[4], vertex_y[4];
 std::atomic<int> vertex_count(0);
-std::atomic<bool> export_selected(false);
+std::atomic<bool> save_ref_image(false);
+std::atomic<bool> show_alignment(false);
 
 cv::String current_img_filename;
+
+void alignImages(Mat& im1, Mat& im2, Mat& im1Reg, Mat& h, int maxFeatures = 500, float goodMatchPercent = 0.15f);
 
 void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
 {
@@ -1057,8 +1060,8 @@ int main(int argc, char *argv[])
 				}
             }
 
-			if (export_selected) {
-				export_selected = false;
+			if (save_ref_image) {
+				save_ref_image = false;
 				if (selected_id >= 0) {
 					quadrangle_t quad = current_quadrangle_vec[selected_id];
 					std::string clsName = synset_txt[quad.id];
@@ -1082,6 +1085,38 @@ int main(int argc, char *argv[])
 					
 					imwrite("ref_" + clsName + ".jpg", warped);
 				}
+			}
+
+			try {
+				if (show_alignment) {
+					show_alignment = false;
+					if (selected_id >= 0) {
+						Mat H(3, 3, CV_32FC1);
+						quadrangle_t quad = current_quadrangle_vec[selected_id];
+						Rect2i rect = current_coord_vec[selected_id].abs_rect;
+						std::string clsName = synset_txt[quad.id];
+						Mat cropped = full_image(rect);
+						Mat ref = imread("ref_" + clsName + ".jpg", IMREAD_COLOR);
+						if (ref.empty())
+							throw std::runtime_error("imread error: ref_" + clsName + ".jpg");
+						Mat aligned(ref.size(), CV_8UC3);
+						Mat frame(ref.cols * 2, ref.rows, CV_8UC3);
+
+						alignImages(cropped, ref, aligned, H);
+						putText(aligned, "Aligned", Point2i(5, 20), FONT_HERSHEY_COMPLEX, 0.7, Scalar(0, 0, 255));
+						putText(ref, "Reference", Point2i(5, 20), FONT_HERSHEY_COMPLEX, 0.7, Scalar(0, 0, 255));
+						hconcat(aligned, ref, frame);
+
+						namedWindow(clsName, WINDOW_NORMAL);
+						resizeWindow(clsName, Size(ref.cols * 2, ref.rows));
+						imshow(clsName, frame);
+						waitKey(0);
+						destroyWindow(clsName);
+					}
+				}
+			}
+			catch (std::runtime_error e) {
+				std::cout << e.what() << std::endl;
 			}
 
             // show moving rect
@@ -1136,7 +1171,8 @@ int main(int argc, char *argv[])
 				putText(full_image_roi,
 					"w - line width   k - hide obj_name   p - copy previous   o - track objects   r - delete selected   R-mouse - move box", //   h - disable help",
 					Point2i(0, 80), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
-				putText(full_image_roi, "z - show quadrangle", Point2i(0, 115), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
+				putText(full_image_roi, "z - show quadrangle    s - save ref image    a - show alignment",
+					Point2i(0, 115), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(50, 10, 10), 2);
 			}
 			else
 			{
@@ -1252,7 +1288,12 @@ int main(int argc, char *argv[])
                 delete_selected = true;
                 break;
 			case 's':
-				export_selected = true;
+			case 1048691:
+				save_ref_image = true;
+				break;
+			case 'a':
+			case 104865:
+				show_alignment = true;
 				break;
 			default:
 				;
@@ -1274,4 +1315,55 @@ int main(int argc, char *argv[])
 	}
 
     return 0;
+}
+
+void alignImages(Mat& im1, Mat& im2, Mat& im1Reg, Mat& h, int maxFeatures, float goodMatchPercent) {
+	// Convert images to grayscale
+	Mat im1Gray, im2Gray;
+	cvtColor(im1, im1Gray, COLOR_BGR2GRAY);
+	cvtColor(im2, im2Gray, COLOR_BGR2GRAY);
+
+	// Variables to store keypoints and descriptors
+	std::vector<KeyPoint> keypoints1, keypoints2;
+	Mat descriptors1, descriptors2;
+
+	// Detect ORB features and compute descriptors.
+	Ptr<Feature2D> orb = ORB::create(maxFeatures);
+	orb->detectAndCompute(im1Gray, Mat(), keypoints1, descriptors1);
+	orb->detectAndCompute(im2Gray, Mat(), keypoints2, descriptors2);
+
+	// Match features.
+	std::vector<DMatch> matches;
+	Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create("BruteForce-Hamming");
+	matcher->match(descriptors1, descriptors2, matches, Mat());
+
+	// Sort matches by score
+	std::sort(matches.begin(), matches.end());
+
+	// Remove not so good matches
+	const int numGoodMatches = matches.size() * goodMatchPercent;
+	matches.erase(matches.begin() + numGoodMatches, matches.end());
+
+
+	//// Draw top matches
+	//Mat imMatches;
+	//drawMatches(im1, keypoints1, im2, keypoints2, matches, imMatches);
+	//imwrite("matches.jpg", imMatches);
+
+
+	// Extract location of good matches
+	std::vector<Point2f> points1, points2;
+
+	for (size_t i = 0; i < matches.size(); i++)
+	{
+		points1.push_back(keypoints1[matches[i].queryIdx].pt);
+		points2.push_back(keypoints2[matches[i].trainIdx].pt);
+	}
+
+	// Find homography
+	h = findHomography(points1, points2, RANSAC);
+
+	// Use homography to warp image
+	warpPerspective(im1, im1Reg, h, im2.size());
+
 }
