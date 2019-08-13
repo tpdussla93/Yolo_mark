@@ -789,7 +789,7 @@ int main(int argc, char *argv[])
 					current_coord_vec.pop_back();
 				}
 			}*/
-
+			
             // marking is completed (left mouse button is OFF)
 			/*
 			if (selected)
