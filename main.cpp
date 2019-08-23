@@ -11,10 +11,11 @@
 #include <fstream>  // std::ofstream
 #include <algorithm> // std::unique
 
+// opencv version: 4.1.0
 #include <opencv2/opencv.hpp>			// C++
 #include <opencv2/core/version.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
-#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/highgui.hpp>
 //#include <opencv2/optflow.hpp>
 #include <opencv2/video/tracking.hpp>
 
@@ -1292,7 +1293,7 @@ int main(int argc, char *argv[])
 				save_ref_image = true;
 				break;
 			case 'a':
-			case 104865:
+			case 1048673:
 				show_alignment = true;
 				break;
 			default:
