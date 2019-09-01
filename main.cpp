@@ -1346,10 +1346,10 @@ void alignImages(Mat& im1, Mat& im2, Mat& im1Reg, Mat& h, int maxFeatures, float
 	matches.erase(matches.begin() + numGoodMatches, matches.end());
 
 
-	//// Draw top matches
-	//Mat imMatches;
-	//drawMatches(im1, keypoints1, im2, keypoints2, matches, imMatches);
-	//imwrite("matches.jpg", imMatches);
+	// Draw top matches
+	Mat imMatches;
+	drawMatches(im1, keypoints1, im2, keypoints2, matches, imMatches);
+	imwrite("matches.jpg", imMatches);
 
 
 	// Extract location of good matches
