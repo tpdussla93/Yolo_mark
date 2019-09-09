@@ -215,7 +215,9 @@ std::atomic<bool> show_alignment(false);
 
 cv::String current_img_filename;
 
-void alignImages(Mat& im1, Mat& im2, Mat& im1Reg, Mat& h, int maxFeatures = 500, float goodMatchPercent = 0.15f);
+void alignImages(Mat& im1, Mat& im2, Mat& im1Reg, Mat& h, 
+					bool standardize = false, bool edgeDetect = false, double threshold1 = 100, double threshold2 = 200,
+					int maxFeatures = 100, float goodMatchPercent = 0.15f);
 
 void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
 {
@@ -1318,11 +1320,36 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void alignImages(Mat& im1, Mat& im2, Mat& im1Reg, Mat& h, int maxFeatures, float goodMatchPercent) {
+void alignImages(Mat& im1, Mat& im2, Mat& im1Reg, Mat& h, bool standardize, bool edgeDetect, 
+				double threshold1, double threshold2, int maxFeatures, float goodMatchPercent) {
 	// Convert images to grayscale
 	Mat im1Gray, im2Gray;
 	cvtColor(im1, im1Gray, COLOR_BGR2GRAY);
 	cvtColor(im2, im2Gray, COLOR_BGR2GRAY);
+
+	// Standardization
+	if (standardize) {
+		Mat mean, stdDev;
+		mean = Mat(1, 1, CV_32FC1);
+		stdDev = Mat(1, 1, CV_32FC1);
+		
+		meanStdDev(im1Gray, mean, stdDev);
+		im1Gray.convertTo(im1Gray, CV_32FC1);
+		im1Gray = (im1Gray - mean) / stdDev;
+		im1Gray.convertTo(im1Gray, CV_8UC1, 50, 127);
+
+		meanStdDev(im2Gray, mean, stdDev);
+		im2Gray.convertTo(im2Gray, CV_32FC1);
+		im2Gray = (im2Gray - mean) / stdDev;
+		im2Gray.convertTo(im2Gray, CV_8UC1, 50, 127);
+	}
+
+	if (edgeDetect) {
+		Canny(im1Gray, im1Gray, threshold1, threshold2);
+		Canny(im2Gray, im2Gray, threshold1, threshold2);
+		imwrite("im1Edge.jpg", im1Gray);
+		imwrite("im2Edge.jpg", im2Gray);
+	}
 
 	// Variables to store keypoints and descriptors
 	std::vector<KeyPoint> keypoints1, keypoints2;
